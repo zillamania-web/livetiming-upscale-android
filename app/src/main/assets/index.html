@@ -110,7 +110,7 @@ function applyCssSharpen(){const amt=Number(sharpEl.value)/100;const mode=preset
 function setMode(){const mode=presetEl.value;if(mode==='max'||mode==='balanced'){stage.classList.add('mode-canvas');stage.classList.remove('mode-video');startLoop()}else{stage.classList.remove('mode-canvas');stage.classList.add('mode-video');stopLoop();applyCssSharpen()}}
 function tryPlay(){applyVolume();video.muted=false;if(Number(vol.value)<5)vol.value='100';applyVolume();setMode();const p=video.play();if(p&&p.then)p.then(()=>{btnPlay.textContent='Pause';status('Playing · full frame')}).catch(()=>{btnPlay.textContent='Play';status('Tap Play for sound')})}
 function parseYouTubeId(url){try{const u=new URL(url);const h=u.hostname.replace(/^www\./,'');if(h==='youtu.be')return u.pathname.split('/').filter(Boolean)[0]||null;if(/youtube/.test(h)){if(u.searchParams.get('v'))return u.searchParams.get('v');const parts=u.pathname.split('/').filter(Boolean);const m=['embed','live','shorts','v'];for(let i=0;i<parts.length-1;i++)if(m.includes(parts[i]))return parts[i+1]}}catch(e){}const x=String(url).match(/(?:v=|\/)([a-zA-Z0-9_-]{11})(?:[?&]|$)/);return x?x[1]:null}
-window.__onYoutubeResolved=function(err,proxyUrl,title){if(err){status('yt-dlp: '+err,true);return}if(!proxyUrl){status('No stream URL',true);return}destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}video.removeAttribute('crossorigin');video.src=proxyUrl;armUi();status('yt-dlp · '+(title||'stream'));tryPlay()};
+window.__onYoutubeResolved=function(err,directUrl,title,proxyUrl){if(err){status('yt-dlp: '+err,true);return}var src=directUrl||proxyUrl;if(!src){status('No stream URL',true);return}destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}video.removeAttribute('crossorigin');video.src=src;armUi();status('yt-dlp · '+(title||'playing'));try{video.load()}catch(e){}tryPlay()};
 window.__androidLoadYoutube=function(url){urlInput.value=url;loadUrl(url)};
 function loadYouTube(pageUrl){destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}if(window.AndroidBridge&&AndroidBridge.resolveYoutube){status('yt-dlp resolving…');try{AndroidBridge.resolveYoutube(pageUrl)}catch(e){status('Bridge error: '+e,true)}return}status('Need Android app for YouTube',true)}
 function loadUrl(url){url=(url||'').trim();if(!url){status('No URL',true);return}if(!/^https?:\/\//i.test(url)&&!url.startsWith('blob:')){status('Need http(s) URL',true);return}if(parseYouTubeId(url)){loadYouTube(url);return}destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}video.removeAttribute('crossorigin');armUi();status('Loading…');if(/\.m3u8|m3u8/i.test(url)&&window.Hls&&Hls.isSupported()){hls=new Hls({enableWorker:true});hls.loadSource(url);hls.attachMedia(video);hls.on(Hls.Events.MANIFEST_PARSED,()=>tryPlay());hls.on(Hls.Events.ERROR,(_,d)=>{if(d.fatal)status('HLS error',true)});return}video.src=url;video.addEventListener('loadeddata',function once(){video.removeEventListener('loadeddata',once);tryPlay()});video.addEventListener('error',()=>status('Playback error',true));try{video.load()}catch(e){}}
@@ -137,9 +137,10 @@ video.addEventListener('timeupdate',()=>{if(!seeking&&video.duration)seek.value=
 video.addEventListener('play',()=>{btnPlay.textContent='Pause';setMode()});
 video.addEventListener('pause',()=>{btnPlay.textContent='Play';stopLoop()});
 video.addEventListener('loadedmetadata',()=>{timeLabel.textContent='0:00 / '+fmt(video.duration)});
+video.addEventListener('error',()=>{status('Video error — try another link or Open video',true)});
 window.addEventListener('resize',()=>{if(canvas.width)layoutCanvas(canvas.width,canvas.height)});
 video.volume=1;video.muted=false;applyVolume();applyCssSharpen();
-status(window.AndroidBridge?'Ready — YouTube or Open video (full frame + sound)':'Ready');
+status(window.AndroidBridge?'Ready — YouTube or Open video':'Ready');
 })();
 </script>
 </body>
