@@ -12,6 +12,10 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Resolves YouTube to a direct media URL that Android WebView can play.
+ * Prefer progressive (video+audio in one file). Fall back to best single URL.
+ */
 public class WebAppBridge {
 
     private final MainActivity activity;
@@ -47,55 +51,84 @@ public class WebAppBridge {
                         ? "https://www.youtube.com/watch?v=" + id
                         : pageUrl.trim();
 
-                // Prefer single-file progressive (has video+audio) for WebView sound
-                YoutubeDLRequest infoReq = new YoutubeDLRequest(target);
-                infoReq.addOption("-f", "b*[acodec!=none][vcodec!=none]/b/bv*+ba/b");
-                infoReq.addOption("--no-playlist");
-                VideoInfo info = YoutubeDL.getInstance().getInfo(infoReq);
+                String mediaUrl = null;
+                String title = "";
 
-                String mediaUrl = pickBestUrl(info);
-                if (mediaUrl == null || mediaUrl.isEmpty()) {
-                    YoutubeDLRequest gReq = new YoutubeDLRequest(target);
-                    gReq.addOption("-f", "b*[acodec!=none]/b/best");
-                    gReq.addOption("-g");
-                    gReq.addOption("--no-playlist");
-                    YoutubeDLResponse resp = YoutubeDL.getInstance().execute(gReq, null, null);
-                    String out = resp.getOut();
-                    if (out != null) {
-                        for (String line : out.split("\n")) {
-                            line = line.trim();
-                            if (line.startsWith("http")) {
-                                mediaUrl = line;
-                                break;
-                            }
+                // 1) Prefer progressive MP4 — plays in WebView with sound
+                mediaUrl = getUrlWithFormat(target,
+                        "18/22/best[ext=mp4][acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]/best");
+
+                // 2) Metadata for title + alternate URL
+                try {
+                    YoutubeDLRequest infoReq = new YoutubeDLRequest(target);
+                    infoReq.addOption("--no-playlist");
+                    infoReq.addOption("-f", "b");
+                    VideoInfo info = YoutubeDL.getInstance().getInfo(infoReq);
+                    if (info != null) {
+                        if (info.getTitle() != null) title = info.getTitle();
+                        if (mediaUrl == null || mediaUrl.isEmpty()) {
+                            mediaUrl = pickBestUrl(info);
+                        }
+                        if ((mediaUrl == null || mediaUrl.isEmpty()) && info.getUrl() != null) {
+                            mediaUrl = info.getUrl();
                         }
                     }
+                } catch (Exception ignored) {}
+
+                // 3) Last resort: plain -g best
+                if (mediaUrl == null || mediaUrl.isEmpty()) {
+                    mediaUrl = getUrlWithFormat(target, "best");
                 }
 
                 if (mediaUrl == null || mediaUrl.isEmpty()) {
-                    fail("yt-dlp returned no media URL");
+                    fail("yt-dlp found no playable URL");
                     return;
                 }
 
+                // DIRECT URL for WebView playback (proxy was breaking video)
                 String proxy = activity.registerProxy(mediaUrl);
-                String title = info != null && info.getTitle() != null ? info.getTitle() : "";
+
                 activity.evalJs(
                         "window.__onYoutubeResolved && window.__onYoutubeResolved(null," +
-                                MainActivity.jsonStr(proxy) + "," +
-                                MainActivity.jsonStr(title) + ")"
+                                MainActivity.jsonStr(mediaUrl) + "," +
+                                MainActivity.jsonStr(title) + "," +
+                                MainActivity.jsonStr(proxy) + ")"
                 );
             } catch (Exception e) {
                 String msg = e.getMessage() != null ? e.getMessage() : "yt-dlp failed";
-                if (msg.length() > 180) msg = msg.substring(0, 180) + "…";
+                if (msg.length() > 200) msg = msg.substring(0, 200) + "…";
                 fail(msg);
             }
         });
     }
 
+    private static String getUrlWithFormat(String target, String format) {
+        try {
+            YoutubeDLRequest gReq = new YoutubeDLRequest(target);
+            gReq.addOption("-f", format);
+            gReq.addOption("-g");
+            gReq.addOption("--no-playlist");
+            gReq.addOption("--no-warnings");
+            YoutubeDLResponse resp = YoutubeDL.getInstance().execute(gReq, null, null);
+            String out = resp.getOut();
+            if (out == null) return null;
+            String first = null;
+            for (String line : out.split("\n")) {
+                line = line.trim();
+                if (!line.startsWith("http")) continue;
+                if (first == null) first = line;
+                return line;
+            }
+            return first;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void fail(String msg) {
         activity.evalJs(
                 "window.__onYoutubeResolved && window.__onYoutubeResolved(" +
-                        MainActivity.jsonStr(msg) + ",null,null)"
+                        MainActivity.jsonStr(msg) + ",null,null,null)"
         );
     }
 
@@ -117,6 +150,7 @@ public class WebAppBridge {
             int height = h != null ? h : 0;
             String vcodec = f.getVcodec();
             String acodec = f.getAcodec();
+            String ext = f.getExt();
             boolean hasVideo = vcodec != null && !vcodec.equals("none");
             boolean hasAudio = acodec != null && !acodec.equals("none");
             if (!hasVideo) continue;
@@ -126,8 +160,12 @@ public class WebAppBridge {
                 bestAny = url;
             }
             if (hasAudio && height >= bestProgH) {
-                bestProgH = height;
-                bestProgressive = url;
+                boolean mp4 = ext == null || "mp4".equalsIgnoreCase(ext)
+                        || url.contains("mime=video%2Fmp4") || url.contains("mime=video/mp4");
+                if (mp4 || bestProgressive == null) {
+                    bestProgH = height;
+                    bestProgressive = url;
+                }
             }
         }
         if (bestProgressive != null) return bestProgressive;
