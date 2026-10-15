@@ -48,7 +48,7 @@ public class MainActivity extends AppCompatActivity {
         io.execute(() -> {
             try {
                 ensureYtdlpInitialized();
-                runOnUiThread(() -> toast("yt-dlp ready — YouTube upscaling enabled"));
+                runOnUiThread(() -> toast("yt-dlp ready — YouTube enabled"));
             } catch (Exception e) {
                 runOnUiThread(() -> toast("yt-dlp init: " + e.getMessage()));
             }
@@ -63,7 +63,7 @@ public class MainActivity extends AppCompatActivity {
         s.setAllowContentAccess(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        s.setUserAgentString(s.getUserAgentString() + " LiveTimingUpscale/2.0");
+        s.setUserAgentString(s.getUserAgentString() + " LiveTimingUpscale/2.1");
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
         webView.addJavascriptInterface(new WebAppBridge(this), "AndroidBridge");
@@ -77,8 +77,8 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String u = request.getUrl().toString();
-                if (u.startsWith("https://livetiming.local/proxy/")) {
-                    String key = u.substring("https://livetiming.local/proxy/".length());
+                if (u.contains("livetiming.local/proxy/")) {
+                    String key = u.substring(u.indexOf("/proxy/") + "/proxy/".length());
                     String real;
                     synchronized (proxyMap) {
                         real = proxyMap.get(key);
@@ -117,11 +117,14 @@ public class MainActivity extends AppCompatActivity {
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(realUrl).openConnection();
+            conn.setInstanceFollowRedirects(true);
             conn.setConnectTimeout(20000);
-            conn.setReadTimeout(60000);
+            conn.setReadTimeout(120000);
             conn.setRequestProperty("User-Agent",
                     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
             conn.setRequestProperty("Accept", "*/*");
+            conn.setRequestProperty("Referer", "https://www.youtube.com/");
+            conn.setRequestProperty("Origin", "https://www.youtube.com");
             String range = request.getRequestHeaders().get("Range");
             if (range != null) conn.setRequestProperty("Range", range);
             conn.connect();
@@ -157,7 +160,7 @@ public class MainActivity extends AppCompatActivity {
         synchronized (proxyMap) {
             proxyMap.put(key, realUrl);
         }
-        return "https://livetiming.local/proxy/" + key;
+        return "http://livetiming.local/proxy/" + key;
     }
 
     void evalJs(String js) {
