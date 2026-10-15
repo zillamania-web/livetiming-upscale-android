@@ -47,15 +47,16 @@ public class WebAppBridge {
                         ? "https://www.youtube.com/watch?v=" + id
                         : pageUrl.trim();
 
+                // Prefer single-file progressive (has video+audio) for WebView sound
                 YoutubeDLRequest infoReq = new YoutubeDLRequest(target);
-                infoReq.addOption("-f", "bv*+ba/b");
+                infoReq.addOption("-f", "b*[acodec!=none][vcodec!=none]/b/bv*+ba/b");
                 infoReq.addOption("--no-playlist");
                 VideoInfo info = YoutubeDL.getInstance().getInfo(infoReq);
 
                 String mediaUrl = pickBestUrl(info);
                 if (mediaUrl == null || mediaUrl.isEmpty()) {
                     YoutubeDLRequest gReq = new YoutubeDLRequest(target);
-                    gReq.addOption("-f", "mp4/best[ext=mp4]/best");
+                    gReq.addOption("-f", "b*[acodec!=none]/b/best");
                     gReq.addOption("-g");
                     gReq.addOption("--no-playlist");
                     YoutubeDLResponse resp = YoutubeDL.getInstance().execute(gReq, null, null);
