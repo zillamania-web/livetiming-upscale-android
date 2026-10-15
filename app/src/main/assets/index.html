@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#0a0c10"/>
+<title>LiveTiming Upscale</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<style>
+:root{--bg:#0a0c10;--panel:#12151c;--border:#2a3140;--text:#e8ecf4;--muted:#9aa3b5;--accent:#5b8cff;--good:#34d399;--bad:#f87171}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;overflow:hidden}
+#bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;background:var(--panel);border-bottom:1px solid var(--border);min-height:52px}
+#bar strong{font-size:14px;margin-right:6px}
+#bar .sub{color:var(--muted);font-size:12px;margin-right:auto}
+button,select,label{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--border);background:#1a1f2a;color:var(--text);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:transparent;color:#fff}
+button:disabled{opacity:.45}
+#urlBox{display:none;width:100%;padding:10px 12px;gap:8px;background:#0d1118;border-bottom:1px solid var(--border);align-items:center}
+#urlBox.open{display:flex;flex-wrap:wrap}
+#urlInput{flex:1;min-width:180px;font:inherit;font-size:13px;border:1px solid var(--border);background:#1a1f2a;color:var(--text);border-radius:8px;padding:8px 12px}
+#stage{position:relative;height:calc(100% - 52px - 36px);background:#000;display:grid;place-items:center}
+#video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#canvas{max-width:100%;max-height:100%;background:#000}
+#empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--muted);padding:24px;gap:8px;pointer-events:none}
+#empty strong{color:var(--text);font-size:18px}
+#empty p{margin:0;max-width:460px;line-height:1.45;font-size:14px}
+#stage.has-video #empty{display:none}
+#status{height:36px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--border);background:var(--panel)}
+#status.error{color:var(--bad)}
+input[type=range]{width:110px;vertical-align:middle}
+.row{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div id="bar">
+<strong>LiveTiming Upscale</strong>
+<span class="sub">yt-dlp · raw pixels · upscale</span>
+<button type="button" class="primary" id="btnFile">Open video</button>
+<button type="button" id="btnUrl">YouTube / URL</button>
+<select id="preset">
+<option value="max" selected>Legibility Max (2×)</option>
+<option value="balanced">Balanced (1.5×)</option>
+<option value="light">Light</option>
+<option value="off">Off</option>
+</select>
+<label class="row">Sharp <input type="range" id="sharp" min="0" max="100" value="85"/></label>
+<button type="button" id="btnPlay" disabled>Play</button>
+<button type="button" id="btnFs" disabled>Fullscreen</button>
+</div>
+<div id="urlBox"><input id="urlInput" type="url" placeholder="YouTube link or https://…mp4 / .m3u8"/><button type="button" class="primary" id="btnGo">Load</button><button type="button" id="btnCancelUrl">Cancel</button></div>
+<div id="stage">
+<video id="video" playsinline webkit-playsinline crossorigin="anonymous"></video>
+<canvas id="canvas"></canvas>
+<div id="empty"><strong>Best Android YouTube Upscaler</strong><p>Uses <b>yt-dlp on device</b> for the real stream, proxies it so canvas can read <b>raw pixels</b>, then upscales. Paste a YouTube link or open a file.</p></div>
+</div>
+<div id="status"><span id="statLeft">Ready</span><span id="statRight">Legibility Max</span></div>
+<input type="file" id="file" accept="video/*,.mkv,.ts,.m3u8,.mov" hidden/>
+<script>
+(function(){
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d',{alpha:false,desynchronized:true});
+const stage=document.getElementById('stage');
+const presetEl=document.getElementById('preset');
+const sharpEl=document.getElementById('sharp');
+const btnPlay=document.getElementById('btnPlay');
+const btnFs=document.getElementById('btnFs');
+const statLeft=document.getElementById('statLeft');
+const statusEl=document.getElementById('status');
+const fileInput=document.getElementById('file');
+const urlBox=document.getElementById('urlBox');
+const urlInput=document.getElementById('urlInput');
+let objectUrl=null,hls=null,raf=0,running=false;
+const PRESETS={max:{scale:2,sharp:85,label:'Legibility Max'},balanced:{scale:1.5,sharp:70,label:'Balanced'},light:{scale:1,sharp:55,label:'Light'},off:{scale:1,sharp:0,label:'Off'}};
+function status(m,err){statLeft.textContent=m;statusEl.classList.toggle('error',!!err)}
+function syncPreset(){const p=PRESETS[presetEl.value]||PRESETS.max;document.getElementById('statRight').textContent=p.label+' · sharp '+sharpEl.value+'%'}
+presetEl.onchange=()=>{sharpEl.value=String((PRESETS[presetEl.value]||PRESETS.max).sharp);syncPreset()};
+sharpEl.oninput=syncPreset;
+function destroyHls(){if(hls){try{hls.destroy()}catch(e){}hls=null}}
+function armUi(){stage.classList.add('has-video');btnPlay.disabled=false;btnFs.disabled=false}
+function tryPlay(){video.muted=false;const p=video.play();if(p&&p.then)p.then(()=>{btnPlay.textContent='Pause';startLoop();status('Playing')}).catch(e=>{btnPlay.textContent='Play';status('Press Play ('+(e&&e.name||'blocked')+')')})}
+function parseYouTubeId(url){try{const u=new URL(url);const h=u.hostname.replace(/^www\./,'');if(h==='youtu.be')return u.pathname.split('/').filter(Boolean)[0]||null;if(/youtube\.com|youtube-nocookie\.com|m\.youtube\.com/.test(h)){if(u.searchParams.get('v'))return u.searchParams.get('v');const parts=u.pathname.split('/').filter(Boolean);const m=['embed','live','shorts','v'];for(let i=0;i<parts.length-1;i++)if(m.includes(parts[i]))return parts[i+1]}}catch(e){}const x=String(url).match(/(?:v=|\/)([a-zA-Z0-9_-]{11})(?:[?&]|$)/);return x?x[1]:null}
+window.__onYoutubeResolved=function(err,proxyUrl,title){if(err){status('yt-dlp: '+err,true);return}if(!proxyUrl){status('No proxy URL',true);return}destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}video.crossOrigin='anonymous';video.src=proxyUrl;armUi();status('yt-dlp → pixel upscale'+(title?' · '+title:''));tryPlay()};
+window.__androidLoadYoutube=function(url){urlInput.value=url;loadUrl(url)};
+function loadYouTubeUpscaled(pageUrl){destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}if(window.AndroidBridge&&AndroidBridge.resolveYoutube){status('yt-dlp resolving…');try{AndroidBridge.resolveYoutube(pageUrl)}catch(e){status('Bridge: '+e,true)}return}status('Need Android APK with yt-dlp for YouTube upscale',true)}
+function isHls(url){return /\.m3u8|m3u8/i.test(url)}
+function loadUrl(url){url=(url||'').trim();if(!url){status('No URL',true);return}if(!/^https?:\/\//i.test(url)&&!url.startsWith('blob:')){status('Need http(s) URL',true);return}if(parseYouTubeId(url)){loadYouTubeUpscaled(url);return}destroyHls();if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null}video.removeAttribute('src');video.load();armUi();status('Loading…');if(isHls(url)&&window.Hls&&Hls.isSupported()){hls=new Hls({enableWorker:true});hls.loadSource(url);hls.attachMedia(video);hls.on(Hls.Events.MANIFEST_PARSED,()=>tryPlay());hls.on(Hls.Events.ERROR,(_,d)=>{if(d.fatal)status('HLS error',true)});return}video.src=url;video.addEventListener('loadeddata',function once(){video.removeEventListener('loadeddata',once);tryPlay()});video.addEventListener('error',()=>status('Video error / CORS — try Open video',true));try{video.load()}catch(e){}}
+function loadFile(file){if(!file)return;destroyHls();if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=URL.createObjectURL(file);video.src=objectUrl;armUi();status('Loaded: '+file.name);tryPlay()}
+document.getElementById('btnFile').onclick=()=>fileInput.click();
+fileInput.onchange=()=>{const f=fileInput.files&&fileInput.files[0];if(f)loadFile(f)};
+document.getElementById('btnUrl').onclick=()=>{urlBox.classList.add('open');urlInput.focus()};
+document.getElementById('btnCancelUrl').onclick=()=>urlBox.classList.remove('open');
+document.getElementById('btnGo').onclick=()=>{urlBox.classList.remove('open');loadUrl(urlInput.value)};
+urlInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();document.getElementById('btnGo').click()}});
+btnPlay.onclick=()=>{if(video.paused)video.play().then(()=>{btnPlay.textContent='Pause';startLoop();status('Playing')}).catch(e=>status('Play failed',true));else{video.pause();btnPlay.textContent='Play';stopLoop();renderFrame()}};
+btnFs.onclick=()=>{if(!document.fullscreenElement)stage.requestFullscreen?.();else document.exitFullscreen?.()};
+stage.ondragover=e=>e.preventDefault();
+stage.ondrop=e=>{e.preventDefault();const f=e.dataTransfer.files&&e.dataTransfer.files[0];if(f)loadFile(f)};
+function stopLoop(){running=false;cancelAnimationFrame(raf)}
+function startLoop(){if(running)return;running=true;const t=()=>{if(!running)return;renderFrame();raf=requestAnimationFrame(t)};raf=requestAnimationFrame(t)}
+function renderFrame(){if(!video.videoWidth)return;const p=PRESETS[presetEl.value]||PRESETS.max;const sharpAmt=Number(sharpEl.value)/100;let outW=Math.round(video.videoWidth*p.scale),outH=Math.round(video.videoHeight*p.scale);const maxE=2560;if(outW>maxE||outH>maxE){const r=Math.min(maxE/outW,maxE/outH);outW=Math.round(outW*r);outH=Math.round(outH*r)}if(canvas.width!==outW||canvas.height!==outH){canvas.width=outW;canvas.height=outH}ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(video,0,0,outW,outH);if(presetEl.value==='off'||sharpAmt<=0.01)return;if(outW*outH>1920*1080*1.5)return;try{const img=ctx.getImageData(0,0,outW,outH);const d=img.data,copy=new Uint8ClampedArray(d),w=outW,h=outH,amount=0.35+sharpAmt*1.1,contrast=1+sharpAmt*0.35,mid=128;for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=(y*w+x)*4;for(let c=0;c<3;c++){const center=copy[i+c];const blur=(copy[i-4+c]+copy[i+4+c]+copy[((y-1)*w+x)*4+c]+copy[((y+1)*w+x)*4+c])*0.25;let v=center+(center-blur)*amount;v=(v-mid)*contrast+mid;d[i+c]=v<0?0:v>255?255:v}}ctx.putImageData(img,0,0)}catch(e){}}
+video.addEventListener('play',()=>{btnPlay.textContent='Pause';startLoop()});
+video.addEventListener('pause',()=>{btnPlay.textContent='Play';stopLoop();renderFrame()});
+video.addEventListener('seeked',renderFrame);
+syncPreset();status(window.AndroidBridge?'Android yt-dlp ready — paste YouTube URL':'Open video or paste URL');
+})();
+</script>
+</body>
+</html>
