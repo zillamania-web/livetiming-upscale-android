@@ -1,0 +1,3 @@
+-keepclassmembers class com.livetiming.upscale.WebAppBridge { public *; }
+-keep class com.yausername.** { *; }
+-keep class org.apache.** { *; }
